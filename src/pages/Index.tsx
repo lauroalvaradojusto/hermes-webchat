@@ -12,11 +12,11 @@ import { Settings, MessageSquare, Loader2 } from "lucide-react";
 const Index = () => {
   const { user, profile, loading } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
-  const { 
-    messages, 
-    isLoading: chatLoading, 
-    sendMessage, 
-    handlePublish, 
+  const {
+    messages,
+    isLoading: chatLoading,
+    sendMessage,
+    handlePublish,
     handleGeneratePdf,
     handleCancelPublish,
     handleFileUpload,
@@ -29,6 +29,8 @@ const Index = () => {
     isLoadingHistory,
     loadChat,
     handleNewChat,
+    selectedFiles,
+    removeFile,
   } = useChat();
 
   if (loading) {
@@ -59,6 +61,8 @@ const Index = () => {
           onCancelPublish={handleCancelPublish}
           isLoading={chatLoading}
           isConfigured={true}
+          selectedFiles={selectedFiles}
+          removeFile={removeFile}
         />
       </div>
 

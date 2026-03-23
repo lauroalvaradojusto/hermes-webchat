@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { FileUp, Loader2, PlusCircle, SendHorizonal, Share2 } from "lucide-react";
+import { FileUp, Loader2, PlusCircle, SendHorizonal, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ChatMessage } from "@/hooks/useChat";
 
@@ -12,9 +12,11 @@ interface Props {
   onCancelPublish: () => Promise<void>;
   isLoading: boolean;
   isConfigured: boolean;
+  selectedFiles: File[];
+  removeFile: (index: number) => void;
 }
 
-export function ChatContainer({ messages, onSendMessage, onFileUpload, onPublish, onGeneratePdf, onCancelPublish, isLoading, isConfigured }: Props) {
+export function ChatContainer({ messages, onSendMessage, onFileUpload, onPublish, onGeneratePdf, onCancelPublish, isLoading, isConfigured, selectedFiles, removeFile }: Props) {
   const [draft, setDraft] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -59,6 +61,30 @@ export function ChatContainer({ messages, onSendMessage, onFileUpload, onPublish
       </div>
 
       <input ref={fileRef} type="file" className="hidden" onChange={onPickFile} />
+
+      {/* Selected Files Preview */}
+      {selectedFiles.length > 0 && (
+        <div className="border-b border-border/50 bg-background/40 px-6 py-3 backdrop-blur">
+          <div className="flex flex-wrap gap-2">
+            {selectedFiles.map((file, index) => (
+              <div key={index} className="flex items-center gap-2 rounded-lg border border-border/60 bg-card/80 px-3 py-2 text-sm">
+                <FileUp className="h-4 w-4 text-primary" />
+                <span className="max-w-[200px] truncate">{file.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {(file.size / 1024).toFixed(1)} KB
+                </span>
+                <button
+                  onClick={() => removeFile(index)}
+                  className="ml-1 rounded-full p-1 hover:bg-accent/20"
+                  type="button"
+                >
+                  <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 space-y-4 overflow-y-auto px-6 py-6">
         {messages.map((message) => (
