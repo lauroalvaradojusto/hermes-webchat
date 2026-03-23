@@ -150,20 +150,56 @@ export function useChat() {
         ? { message: content, files: filesData, userId: user.id }
         : { message: content, chatId: currentChatId, userId: user.id };
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': import.meta.env.VITE_HERMES_API_KEY || ''
-        },
-        body: JSON.stringify(requestBody)
-      });
+      let response: Response;
+      let data: any;
 
-      const data = await response.json();
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': import.meta.env.VITE_HERMES_API_KEY || ''
+          },
+          body: JSON.stringify(requestBody)
+        });
 
-      if (!response.ok) {
-        throw new Error(data.detail || `Backend error: ${response.status}`);
+        // If file endpoint returns 404, fallback to regular chat
+        if (response.status === 404 && selectedFiles.length > 0) {
+          console.warn('File analysis endpoint not available, using fallback');
+
+          const fallbackMessage = content + '\n\n[Archivos adjuntos: ' +
+            selectedFiles.map(f => `${f.name} (${(f.size / 1024).toFixed(1)} KB)`).join(', ') +
+            ']\n\nNota: El análisis de archivos está temporalmente deshabilitado. Los archivos se han recibido pero no se pueden procesar hasta que Railway se conecte al repositorio GitHub.';
+
+          response = await fetch(`${BACKEND_URL}/api/v1/chat/deepseek`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-API-Key': import.meta.env.VITE_HERMES_API_KEY || ''
+            },
+            body: JSON.stringify({ message: fallbackMessage, chatId: currentChatId, userId: user.id })
+          });
+        }
+
+        data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || `Backend error: ${response.status}`);
+        }
+      } catch (error: any) {
+        console.error('Error sending message:', error);
+        const fallbackMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `Error de conexión: ${error.message}`,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, fallbackMessage]);
+        setIsLoading(false);
+        setSelectedFiles([]);
+        return;
       }
+
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
