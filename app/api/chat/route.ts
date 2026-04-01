@@ -12,6 +12,7 @@ type Payload = {
   message?: string;
   history?: Array<{ role: string; content: string }>;
   model?: string;
+  search?: boolean;
   files?: FileData[];
 };
 
@@ -28,6 +29,135 @@ function fallbackReply(message: string, history: Payload["history"] = []) {
   }
   const last = history.at(-1)?.content ?? "";
   return `Hermes recibió: ${message}. ${last ? `Contexto previo: ${last.slice(0, 80)}.` : ""}`.trim();
+}
+
+type SearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+};
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripHtml(value: string) {
+  return decodeHtmlEntities(value.replace(/<[^>]+>/g, " "));
+}
+
+function decodeDuckDuckGoLink(rawHref: string) {
+  const href = rawHref.startsWith("//") ? `https:${rawHref}` : rawHref;
+  try {
+    const parsed = new URL(href);
+    const uddg = parsed.searchParams.get("uddg");
+    if (uddg) return decodeURIComponent(uddg);
+    return href;
+  } catch {
+    return href;
+  }
+}
+
+function shouldAutoSearch(message: string) {
+  const m = message.toLowerCase();
+  const triggers = [
+    "latest", "today", "current", "news", "breaking", "update", "recent", "now",
+    "price", "stock", "market", "weather", "release", "version", "who won", "results",
+    "hoy", "actual", "actualizado", "último", "ultima", "última", "noticia", "noticias",
+    "precio", "cotización", "cotizacion", "tendencia", "fuente", "source", "link", "cite",
+  ];
+  if (triggers.some((term) => m.includes(term))) return true;
+  if (/\b20\d{2}\b/.test(m)) return true;
+  return false;
+}
+
+async function webSearch(query: string, braveApiKey: string): Promise<SearchResult[]> {
+  if (braveApiKey) {
+    try {
+      const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+      const braveResp = await fetch(braveUrl, {
+        headers: {
+          Accept: "application/json",
+          "X-Subscription-Token": braveApiKey,
+        },
+      });
+      if (braveResp.ok) {
+        const data = await braveResp.json();
+        const results = (data?.web?.results ?? [])
+          .slice(0, 5)
+          .map((item: any) => ({
+            title: String(item?.title ?? "").trim(),
+            url: String(item?.url ?? "").trim(),
+            snippet: String(item?.description ?? "").trim(),
+          }))
+          .filter((item: SearchResult) => item.title && item.url);
+        if (results.length > 0) return results;
+      }
+    } catch {
+      // continue to DuckDuckGo fallback
+    }
+  }
+
+  const ddgResp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "text/html",
+    },
+  });
+
+  if (!ddgResp.ok) return [];
+
+  const html = await ddgResp.text();
+  const titleRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/div>/g;
+
+  const titles: Array<{ href: string; title: string }> = [];
+  const snippets: string[] = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = titleRegex.exec(html)) !== null && titles.length < 6) {
+    titles.push({
+      href: decodeDuckDuckGoLink(match[1]),
+      title: stripHtml(match[2]),
+    });
+  }
+
+  while ((match = snippetRegex.exec(html)) !== null && snippets.length < 6) {
+    snippets.push(stripHtml(match[1] || match[2] || ""));
+  }
+
+  return titles
+    .slice(0, 5)
+    .map((item, index) => ({
+      title: item.title,
+      url: item.href,
+      snippet: snippets[index] || "",
+    }))
+    .filter((item) => item.title && item.url);
+}
+
+function buildWebContext(query: string, results: SearchResult[]) {
+  if (!results.length) return "";
+  const now = new Date().toISOString();
+  const refs = results
+    .map((item, idx) => `[${idx + 1}] ${item.title}\nURL: ${item.url}\nSnippet: ${item.snippet}`)
+    .join("\n\n");
+
+  return [
+    "[WEB_SEARCH_CONTEXT]",
+    `Query: ${query}`,
+    `Timestamp: ${now}`,
+    "Use this context for fresh facts. Cite source URLs inline when relevant.",
+    refs,
+    "[/WEB_SEARCH_CONTEXT]",
+  ].join("\n");
 }
 
 export async function POST(req: Request) {
@@ -80,6 +210,23 @@ export async function POST(req: Request) {
     ""
   ).replace(/\/$/, "");
   const apiKey = cleanEnv(process.env.HERMES_API_KEY || process.env.VITE_HERMES_API_KEY || "");
+  const braveApiKey = cleanEnv(process.env.BRAVE_SEARCH_API_KEY || process.env.BRAVE_API_KEY || "");
+
+  let messageForModel = message;
+  let searchResults: SearchResult[] = [];
+  const shouldSearch = !hasFiles && (payload.search === true || shouldAutoSearch(message));
+
+  if (shouldSearch && message) {
+    try {
+      searchResults = await webSearch(message, braveApiKey);
+      const webContext = buildWebContext(message, searchResults);
+      if (webContext) {
+        messageForModel = `${message}\n\n${webContext}`;
+      }
+    } catch {
+      // do not block chat if search fails
+    }
+  }
 
   if (backendUrl) {
     try {
@@ -90,14 +237,15 @@ export async function POST(req: Request) {
 
       const requestBody = hasFiles
         ? {
-            message: message,
+            message: messageForModel,
             files: payload.files,
             userId: email,
           }
         : {
-            message,
+            message: messageForModel,
             history: payload.history ?? [],
             model: payload.model ?? "",
+            search: shouldSearch,
           };
 
       const upstream = await fetch(endpoint, {
@@ -114,7 +262,16 @@ export async function POST(req: Request) {
       if (upstream.ok) {
         try {
           const json = JSON.parse(raw);
-          return NextResponse.json({ ok: true, source: "hermes-backend", ...json });
+          return NextResponse.json({
+            ok: true,
+            source: "hermes-backend",
+            web_search: {
+              requested: shouldSearch,
+              used: searchResults.length > 0,
+              sources: searchResults.slice(0, 5),
+            },
+            ...json,
+          });
         } catch {
           return NextResponse.json({ ok: true, source: "hermes-backend", response: raw });
         }
