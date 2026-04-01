@@ -18,10 +18,13 @@ import {
   Loader2,
   Menu,
   MessageSquare,
+  Palette,
   Paperclip,
   Plus,
   SendHorizonal,
   Settings2,
+  Sparkles,
+  Briefcase,
   X,
 } from "lucide-react";
 import { isApprovedGoogleEmail } from "@/lib/auth";
@@ -49,6 +52,25 @@ type ChatSession = {
   messages: ChatMessage[];
   createdAt: string;
 };
+
+type LookAndFeel = "futuristic" | "business" | "colorful";
+
+const LOOK_AND_FEEL_CLASS: Record<LookAndFeel, string> = {
+  futuristic: "theme-futuristic",
+  business: "theme-business",
+  colorful: "theme-colorful",
+};
+
+const LOOK_AND_FEEL_OPTIONS: Array<{
+  key: LookAndFeel;
+  title: string;
+  description: string;
+  icon: typeof Sparkles;
+}> = [
+  { key: "futuristic", title: "Futuristic", description: "Neon + tech glow", icon: Sparkles },
+  { key: "business", title: "Business", description: "Minimal + executive", icon: Briefcase },
+  { key: "colorful", title: "Colorful", description: "Vibrant + playful", icon: Palette },
+];
 
 function newChatSession(): ChatSession {
   return {
@@ -186,8 +208,14 @@ export function HermesInterface() {
   const [activeSessionId, setActiveSessionId] = useState<string>(initialSession.id);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
-  const [backendUrl, setBackendUrl] = useState("http://localhost:8080");
   const [model, setModel] = useState("opencode/claude-opus-4-6");
+  const [lookAndFeel, setLookAndFeel] = useState<LookAndFeel>(() => {
+    if (typeof window === "undefined") return "futuristic";
+    const saved = window.localStorage.getItem("hermes-look-and-feel-v1");
+    return saved === "business" || saved === "colorful" || saved === "futuristic"
+      ? saved
+      : "futuristic";
+  });
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -257,6 +285,14 @@ export function HermesInterface() {
     sessionStorage.setItem(storageKey, next);
     setShaderPlacement(next);
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const classes = Object.values(LOOK_AND_FEEL_CLASS);
+    classes.forEach((className) => root.classList.remove(className));
+    root.classList.add(LOOK_AND_FEEL_CLASS[lookAndFeel]);
+    window.localStorage.setItem("hermes-look-and-feel-v1", lookAndFeel);
+  }, [lookAndFeel]);
 
   const updateActiveSession = useCallback((updater: (s: ChatSession) => ChatSession) => {
     setChatSessions((prev) =>
@@ -656,26 +692,51 @@ export function HermesInterface() {
 
         {/* Settings panel */}
         {showSettings && (
-          <div className="border-b border-border bg-card/80 px-4 py-3 max-w-[90vw] self-center w-full">
-            <div className="flex flex-wrap gap-3 items-center">
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                Backend URL:
-                <input
-                  value={backendUrl}
-                  onChange={(e) => setBackendUrl(e.target.value)}
-                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground outline-none focus:border-primary w-48"
-                  placeholder="http://localhost:8080"
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                Model:
+          <div className="w-full self-center border-b border-border bg-card/85 px-4 py-3 backdrop-blur-sm">
+            <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-[1.6fr_1fr]">
+              <div className="rounded-xl border border-border bg-background/60 p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <Palette className="h-4 w-4 text-primary" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Look & Feel</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {LOOK_AND_FEEL_OPTIONS.map((option) => {
+                    const Icon = option.icon;
+                    const isActive = lookAndFeel === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setLookAndFeel(option.key)}
+                        className={`rounded-lg border px-3 py-2 text-left transition-all ${
+                          isActive
+                            ? "border-primary/60 bg-primary/15 shadow-[0_0_24px_rgba(59,130,246,0.15)]"
+                            : "border-border bg-card hover:border-primary/30 hover:bg-secondary/60"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                          <span className="text-sm font-medium">{option.title}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">{option.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background/60 p-3">
+                <label className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Settings2 className="h-4 w-4 text-primary" />
+                  Model
+                </label>
                 <input
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground outline-none focus:border-primary w-48"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground outline-none transition-colors focus:border-primary"
                   placeholder="opencode/claude-opus-4-6"
                 />
-              </label>
+              </div>
             </div>
           </div>
         )}
