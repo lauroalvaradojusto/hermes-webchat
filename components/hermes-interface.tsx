@@ -89,27 +89,17 @@ function TypingIndicator() {
 
 function WelcomeScreen({ onQuickAction }: { onQuickAction: (text: string) => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-6 px-4 py-20 text-center">
-      <div className="relative h-48 w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-black/40">
-        <ShaderAnimation className="h-full w-full" />
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-primary/40 bg-primary/20">
-              <MessageSquare className="h-6 w-6 text-primary" />
-            </div>
-            <span className="text-lg font-semibold tracking-tight text-white">Hermes Live Canvas</span>
-          </div>
-        </div>
+    <div className="flex flex-col items-center justify-center h-full gap-6 px-4 text-center py-20">
+      <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20">
+        <MessageSquare className="w-8 h-8 text-primary" />
       </div>
-
       <div className="space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">What can I help you with?</h2>
-        <p className="max-w-sm text-sm text-muted-foreground">
+        <p className="text-muted-foreground max-w-sm text-sm">
           Ask anything — I can search the web, analyze files, and more.
         </p>
       </div>
-
-      <div className="grid w-full max-w-lg grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-lg">
         {[
           { label: "Search the web", prompt: "Search the web for the latest AI news" },
           { label: "Upload a file", prompt: "I want to analyze a file" },
@@ -118,7 +108,7 @@ function WelcomeScreen({ onQuickAction }: { onQuickAction: (text: string) => voi
           <button
             key={item.label}
             onClick={() => onQuickAction(item.prompt)}
-            className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
+            className="px-4 py-3 rounded-xl border border-border bg-card hover:bg-secondary transition-colors text-sm font-medium text-foreground"
           >
             {item.label}
           </button>
@@ -205,6 +195,7 @@ export function HermesInterface() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [shaderPlacement, setShaderPlacement] = useState<"login" | "workspace">("login");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -253,6 +244,19 @@ export function HermesInterface() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
+
+  useEffect(() => {
+    const storageKey = "hermes_shader_rotation_v1";
+    const saved = sessionStorage.getItem(storageKey);
+    if (saved === "login" || saved === "workspace") {
+      setShaderPlacement(saved);
+      return;
+    }
+
+    const next = Math.random() < 0.5 ? "login" : "workspace";
+    sessionStorage.setItem(storageKey, next);
+    setShaderPlacement(next);
+  }, []);
 
   const updateActiveSession = useCallback((updater: (s: ChatSession) => ChatSession) => {
     setChatSessions((prev) =>
@@ -475,6 +479,9 @@ export function HermesInterface() {
     await supabaseBrowser.auth.signOut();
   };
 
+  const showShaderInLogin = shaderPlacement === "login";
+  const showShaderInWorkspace = shaderPlacement === "workspace";
+
   if (authLoading) {
     return (
       <div className="relative flex min-h-screen items-center justify-center bg-background">
@@ -491,6 +498,12 @@ export function HermesInterface() {
     return (
       <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
         <ShaderBackground className="opacity-55" />
+        {showShaderInLogin && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[69vh] w-[69vw] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[2rem] border border-primary/30 opacity-80 shadow-[0_0_90px_rgba(59,130,246,0.25)]">
+            <ShaderAnimation className="h-full w-full" />
+            <div className="absolute inset-0 bg-black/35" />
+          </div>
+        )}
         <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-card/90 p-8 shadow-2xl backdrop-blur">
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
             <Lock className="h-3.5 w-3.5" /> Restricted access
@@ -546,8 +559,15 @@ export function HermesInterface() {
       messages[messages.length - 1]?.content === "");
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden">
-      <div className="pointer-events-none fixed inset-0 bg-gradient-to-br from-background via-background to-secondary/20" />
+    <div className="relative flex h-screen overflow-hidden bg-background text-foreground">
+      <ShaderBackground className="opacity-40" />
+      <div className="pointer-events-none fixed inset-0 bg-gradient-to-br from-background/85 via-background/75 to-secondary/20" />
+      {showShaderInWorkspace && (
+        <div className="pointer-events-none fixed left-1/2 top-1/2 z-[1] h-[69vh] w-[69vw] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-[2rem] border border-primary/25 opacity-70 shadow-[0_0_100px_rgba(139,92,246,0.28)]">
+          <ShaderAnimation className="h-full w-full" />
+          <div className="absolute inset-0 bg-black/40" />
+        </div>
+      )}
 
       {/* Sidebar overlay on mobile */}
       {sidebarOpen && (
