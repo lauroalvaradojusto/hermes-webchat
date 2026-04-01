@@ -653,11 +653,26 @@ export function HermesInterface() {
               onChange={(e) => {
                 const fileList = e.target.files;
                 if (!fileList || fileList.length === 0) return;
+                const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+                const MAX_FILES = 3;
+                const oversized = Array.from(fileList).find((f) => f.size > MAX_SIZE);
+                if (oversized) {
+                  alert(`"${oversized.name}" exceeds 10MB limit`);
+                  e.target.value = "";
+                  return;
+                }
                 const newFiles: AttachedFile[] = Array.from(fileList).map((f) => ({
                   file: f,
                   id: crypto.randomUUID(),
                 }));
-                setAttachedFiles((prev) => [...prev, ...newFiles]);
+                setAttachedFiles((prev) => {
+                  const combined = [...prev, ...newFiles];
+                  if (combined.length > MAX_FILES) {
+                    alert(`Maximum ${MAX_FILES} files allowed`);
+                    return prev;
+                  }
+                  return combined;
+                });
                 // Reset input so same file can be re-selected
                 e.target.value = "";
               }}

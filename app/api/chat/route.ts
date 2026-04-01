@@ -33,9 +33,25 @@ function fallbackReply(message: string, history: Payload["history"] = []) {
 export async function POST(req: Request) {
   const payload = (await req.json().catch(() => ({}))) as Payload;
   const message = (payload.message ?? "").trim();
+  const hasFiles = Array.isArray(payload.files) && payload.files.length > 0;
 
-  if (!message) {
-    return NextResponse.json({ ok: false, error: "Message is required" }, { status: 400 });
+  if (!message && !hasFiles) {
+    return NextResponse.json({ ok: false, error: "Message or files are required" }, { status: 400 });
+  }
+
+  // Validate file sizes (max 10MB per file, max 3 files)
+  if (hasFiles) {
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_FILES = 3;
+    if (payload.files!.length > MAX_FILES) {
+      return NextResponse.json({ ok: false, error: `Maximum ${MAX_FILES} files allowed` }, { status: 400 });
+    }
+    for (const file of payload.files!) {
+      const size = Math.ceil((file.content.length * 3) / 4); // base64 decode size estimate
+      if (size > MAX_FILE_SIZE) {
+        return NextResponse.json({ ok: false, error: `File "${file.name}" exceeds 10MB limit` }, { status: 400 });
+      }
+    }
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
@@ -66,8 +82,6 @@ export async function POST(req: Request) {
 
   if (backendUrl) {
     try {
-      const hasFiles = payload.files && payload.files.length > 0;
-
       // Use analyze-file endpoint when files are attached
       const endpoint = hasFiles
         ? `${backendUrl}/api/v1/chat/analyze-file`
