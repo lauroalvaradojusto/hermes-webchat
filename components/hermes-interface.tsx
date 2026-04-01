@@ -309,11 +309,18 @@ export function HermesInterface() {
         );
       }
 
+      const { data: { session: latestSession } } = await supabaseBrowser.auth.getSession();
+      const accessToken = latestSession?.access_token ?? authSession?.access_token;
+
+      if (latestSession?.access_token && latestSession.access_token !== authSession?.access_token) {
+        setAuthSession(latestSession);
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(authSession?.access_token ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({
           message: value,
@@ -326,8 +333,8 @@ export function HermesInterface() {
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
-          setAuthError("Your session is not authorized for Hermes.");
-          void supabaseBrowser.auth.signOut();
+          const payload = await response.json().catch(() => null);
+          setAuthError(payload?.error || "Your session is not authorized for Hermes.");
           setBusy(false);
           return;
         }

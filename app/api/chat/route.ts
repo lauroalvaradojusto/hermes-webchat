@@ -66,9 +66,8 @@ export async function POST(req: Request) {
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
   const email = userData.user?.email ?? "";
-  const provider = userData.user?.app_metadata?.provider ?? "";
 
-  if (userError || !userData.user || provider !== "google" || !isApprovedGoogleEmail(email)) {
+  if (userError || !userData.user || !isApprovedGoogleEmail(email)) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
