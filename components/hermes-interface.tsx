@@ -202,6 +202,20 @@ export function HermesInterface() {
 
   useEffect(() => {
     let mounted = true;
+
+    // Handle auth tokens from URL hash (when Supabase redirects back with tokens)
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      const url = new URL(window.location.href);
+      const hashParams = new URLSearchParams(hash.replace("#", ""));
+      const accessToken = hashParams.get("access_token");
+      const refreshToken = hashParams.get("refresh_token");
+      if (accessToken && refreshToken) {
+        supabaseBrowser.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        window.location.hash = "";
+      }
+    }
+
     supabaseBrowser.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return;
       setAuthSession(session);
