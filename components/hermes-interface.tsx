@@ -55,6 +55,16 @@ type ChatSession = {
 
 type LookAndFeel = "futuristic" | "business" | "colorful";
 
+type CreditSummary = {
+  available_usd: number | null;
+  unlimited: boolean;
+  plan_type: string;
+  chat_message_cost_usd: number;
+  packages_usd: number[];
+  currency: string;
+  is_test_user: boolean;
+};
+
 const LOOK_AND_FEEL_CLASS: Record<LookAndFeel, string> = {
   futuristic: "theme-futuristic",
   business: "theme-business",
@@ -224,6 +234,10 @@ export function HermesInterface() {
   const [showSettings, setShowSettings] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [shaderPlacement, setShaderPlacement] = useState<"login" | "workspace">("login");
+  const [credits, setCredits] = useState<CreditSummary | null>(null);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState<"stripe" | "paypal" | null>(null);
+  const [selectedPackageUsd, setSelectedPackageUsd] = useState<number>(16);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -294,6 +308,74 @@ export function HermesInterface() {
     window.localStorage.setItem("hermes-look-and-feel-v1", lookAndFeel);
   }, [lookAndFeel]);
 
+  const refreshCredits = useCallback(async () => {
+    const { data: { session } } = await supabaseBrowser.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+
+    const response = await fetch("/api/credits", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const payload = await response.json().catch(() => null);
+    if (response.ok && payload?.credits) {
+      setCredits(payload.credits as CreditSummary);
+      if (Array.isArray(payload.credits.packages_usd) && payload.credits.packages_usd.length > 0) {
+        setSelectedPackageUsd((prev) =>
+          payload.credits.packages_usd.includes(prev) ? prev : payload.credits.packages_usd[0],
+        );
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authSession || !approved) return;
+    void refreshCredits();
+  }, [authSession, approved, refreshCredits]);
+
+  const startCheckout = useCallback(async (provider: "stripe" | "paypal") => {
+    const { data: { session } } = await supabaseBrowser.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+
+    setCheckoutLoading(provider);
+    setBillingError(null);
+
+    try {
+      const response = await fetch("/api/credits/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider,
+          package_usd: selectedPackageUsd,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (payload?.credits) setCredits(payload.credits as CreditSummary);
+
+      if (!response.ok) {
+        setBillingError(payload?.error || payload?.provider_error || "Checkout is not configured yet");
+        setShowSettings(true);
+        return;
+      }
+
+      if (payload?.checkout_url) {
+        window.location.href = payload.checkout_url;
+        return;
+      }
+
+      setBillingError("Checkout URL was not returned by provider.");
+    } catch {
+      setBillingError("Unable to start checkout right now.");
+    } finally {
+      setCheckoutLoading(null);
+    }
+  }, [selectedPackageUsd]);
+
   const updateActiveSession = useCallback((updater: (s: ChatSession) => ChatSession) => {
     setChatSessions((prev) =>
       prev.map((s) => (s.id === activeSessionId ? updater(s) : s))
@@ -303,6 +385,12 @@ export function HermesInterface() {
   const sendMessage = useCallback(async (text: string, files: AttachedFile[] = []) => {
     const value = text.trim();
     if ((!value && files.length === 0) || busy) return;
+
+    if (credits && !credits.unlimited && (credits.available_usd ?? 0) < (credits.chat_message_cost_usd || 1)) {
+      setBillingError("Insufficient credits. Please purchase more to continue.");
+      setShowSettings(true);
+      return;
+    }
 
     setPrompt("");
     setAttachedFiles([]);
@@ -384,13 +472,23 @@ export function HermesInterface() {
       });
 
       if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (payload?.credits) setCredits(payload.credits as CreditSummary);
+
         if (response.status === 401 || response.status === 403) {
-          const payload = await response.json().catch(() => null);
           setAuthError(payload?.error || "Your session is not authorized for Hermes.");
           setBusy(false);
           return;
         }
-        throw new Error("Request failed");
+
+        if (response.status === 402) {
+          setBillingError(payload?.error || "Insufficient credits.");
+          setShowSettings(true);
+          setBusy(false);
+          return;
+        }
+
+        throw new Error(payload?.error || "Request failed");
       }
 
       const contentType = response.headers.get("content-type") || "";
@@ -432,6 +530,9 @@ export function HermesInterface() {
         }
       } else {
         const data = await response.json();
+        if (data?.credits) setCredits(data.credits as CreditSummary);
+        setBillingError(null);
+
         const answer = data.response || data.message || "Response processed.";
         setChatSessions((prev) =>
           prev.map((s) =>
@@ -468,7 +569,7 @@ export function HermesInterface() {
     } finally {
       setBusy(false);
     }
-  }, [busy, activeSessionId, authSession, model, searchEnabled]);
+  }, [busy, activeSessionId, authSession, model, searchEnabled, credits]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -512,6 +613,8 @@ export function HermesInterface() {
 
   const handleSignOut = async () => {
     setAuthError(null);
+    setBillingError(null);
+    setCredits(null);
     await supabaseBrowser.auth.signOut();
   };
 
@@ -655,11 +758,28 @@ export function HermesInterface() {
             </button>
           ))}
         </div>
-        <div className="border-t border-border p-3">
+        <div className="border-t border-border p-3 space-y-2">
           <div className="text-xs text-muted-foreground truncate">{authSession.user.email}</div>
+          <div className="rounded-lg border border-border bg-background/70 px-2.5 py-2 text-[11px]">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Credits</span>
+              <span className="font-semibold text-foreground">
+                {credits?.unlimited ? "Unlimited" : `$${credits?.available_usd ?? "--"}`}
+              </span>
+            </div>
+            {!credits?.unlimited && (
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="mt-1 text-[11px] text-primary hover:underline"
+              >
+                Buy credits
+              </button>
+            )}
+          </div>
           <button
             onClick={handleSignOut}
-            className="mt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Sign out
           </button>
@@ -693,7 +813,7 @@ export function HermesInterface() {
         {/* Settings panel */}
         {showSettings && (
           <div className="w-full self-center border-b border-border bg-card/85 px-4 py-3 backdrop-blur-sm">
-            <div className="mx-auto grid w-full max-w-5xl gap-4 lg:grid-cols-[1.6fr_1fr]">
+            <div className="mx-auto grid w-full max-w-6xl gap-4 lg:grid-cols-[1.5fr_1fr_1.3fr]">
               <div className="rounded-xl border border-border bg-background/60 p-3">
                 <div className="mb-2 flex items-center gap-2">
                   <Palette className="h-4 w-4 text-primary" />
@@ -736,6 +856,66 @@ export function HermesInterface() {
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground outline-none transition-colors focus:border-primary"
                   placeholder="opencode/claude-opus-4-6"
                 />
+              </div>
+
+              <div className="rounded-xl border border-border bg-background/60 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Credits & Billing</span>
+                  <span className="text-sm font-semibold text-foreground">
+                    {credits?.unlimited ? "Unlimited" : `$${credits?.available_usd ?? "--"}`}
+                  </span>
+                </div>
+
+                {billingError && (
+                  <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                    {billingError}
+                  </div>
+                )}
+
+                {!credits?.unlimited && (
+                  <>
+                    <div className="mb-2 grid grid-cols-5 gap-1">
+                      {(credits?.packages_usd ?? [4, 8, 16, 32, 64]).map((amount) => (
+                        <button
+                          key={amount}
+                          type="button"
+                          onClick={() => setSelectedPackageUsd(amount)}
+                          className={`rounded-md border px-1.5 py-1 text-[11px] transition-colors ${
+                            selectedPackageUsd === amount
+                              ? "border-primary bg-primary/15 text-primary"
+                              : "border-border text-muted-foreground hover:bg-secondary"
+                          }`}
+                        >
+                          ${amount}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={checkoutLoading !== null}
+                        onClick={() => void startCheckout("stripe")}
+                      >
+                        {checkoutLoading === "stripe" ? "Opening…" : "Stripe"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={checkoutLoading !== null}
+                        onClick={() => void startCheckout("paypal")}
+                      >
+                        {checkoutLoading === "paypal" ? "Opening…" : "PayPal"}
+                      </Button>
+                    </div>
+                  </>
+                )}
+
+                {credits?.unlimited && (
+                  <p className="text-[11px] text-muted-foreground">Test user: unlimited credits enabled.</p>
+                )}
               </div>
             </div>
           </div>

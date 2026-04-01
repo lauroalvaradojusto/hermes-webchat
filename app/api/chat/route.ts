@@ -1,6 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { isApprovedGoogleEmail } from "@/lib/auth";
+import {
+  CHAT_MESSAGE_COST_USD,
+  createAuthedSupabaseClient,
+  ensureCreditProfile,
+  consumeChatCredit,
+  toCreditSummary,
+  cleanEnv,
+} from "@/lib/credits";
 
 type FileData = {
   name: string;
@@ -16,6 +24,12 @@ type Payload = {
   files?: FileData[];
 };
 
+type SearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+};
+
 function fallbackReply(message: string, history: Payload["history"] = []) {
   const lower = message.toLowerCase();
   if (lower.includes("ayuda") || lower.includes("help")) {
@@ -29,40 +43,6 @@ function fallbackReply(message: string, history: Payload["history"] = []) {
   }
   const last = history.at(-1)?.content ?? "";
   return `Hermes recibió: ${message}. ${last ? `Contexto previo: ${last.slice(0, 80)}.` : ""}`.trim();
-}
-
-type SearchResult = {
-  title: string;
-  url: string;
-  snippet: string;
-};
-
-function decodeHtmlEntities(value: string) {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function stripHtml(value: string) {
-  return decodeHtmlEntities(value.replace(/<[^>]+>/g, " "));
-}
-
-function decodeDuckDuckGoLink(rawHref: string) {
-  const href = rawHref.startsWith("//") ? `https:${rawHref}` : rawHref;
-  try {
-    const parsed = new URL(href);
-    const uddg = parsed.searchParams.get("uddg");
-    if (uddg) return decodeURIComponent(uddg);
-    return href;
-  } catch {
-    return href;
-  }
 }
 
 function shouldAutoSearch(message: string) {
@@ -123,6 +103,13 @@ function buildWebContext(query: string, results: SearchResult[]) {
   ].join("\n");
 }
 
+function creditsPayload(profile: Awaited<ReturnType<typeof ensureCreditProfile>>) {
+  return {
+    ...toCreditSummary(profile),
+    charged_this_request_usd: 0,
+  };
+}
+
 export async function POST(req: Request) {
   const payload = (await req.json().catch(() => ({}))) as Payload;
   const message = (payload.message ?? "").trim();
@@ -132,22 +119,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Message or files are required" }, { status: 400 });
   }
 
-  // Validate file sizes (max 10MB per file, max 3 files)
   if (hasFiles) {
-    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-    const MAX_FILES = 3;
-    if (payload.files!.length > MAX_FILES) {
-      return NextResponse.json({ ok: false, error: `Maximum ${MAX_FILES} files allowed` }, { status: 400 });
+    const maxFileSize = 10 * 1024 * 1024;
+    const maxFiles = 3;
+    if (payload.files!.length > maxFiles) {
+      return NextResponse.json({ ok: false, error: `Maximum ${maxFiles} files allowed` }, { status: 400 });
     }
     for (const file of payload.files!) {
-      const size = Math.ceil((file.content.length * 3) / 4); // base64 decode size estimate
-      if (size > MAX_FILE_SIZE) {
+      const size = Math.ceil((file.content.length * 3) / 4);
+      if (size > maxFileSize) {
         return NextResponse.json({ ok: false, error: `File "${file.name}" exceeds 10MB limit` }, { status: 400 });
       }
     }
   }
-
-  const cleanEnv = (value?: string) => (value ?? "").replace(/\\n/g, "").trim();
 
   const supabaseUrl = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL);
   const supabaseAnonKey = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY);
@@ -161,16 +145,41 @@ export async function POST(req: Request) {
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
   const email = userData.user?.email ?? "";
+  const userId = userData.user?.id ?? "";
 
   if (userError || !userData.user || !isApprovedGoogleEmail(email)) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
+  const userSupabase = createAuthedSupabaseClient(supabaseUrl, supabaseAnonKey, accessToken);
+
+  let profile;
+  try {
+    profile = await ensureCreditProfile({
+      supabase: userSupabase,
+      userId,
+      email,
+    });
+  } catch {
+    return NextResponse.json({ ok: false, error: "Unable to load credits profile" }, { status: 500 });
+  }
+
+  if (!profile.unlimited_credits && profile.credits < CHAT_MESSAGE_COST_USD) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Insufficient credits. Purchase a package to continue.",
+        credits: creditsPayload(profile),
+      },
+      { status: 402 },
+    );
+  }
+
   const backendUrl = cleanEnv(
     process.env.HERMES_API_URL ||
-    process.env.NEXT_PUBLIC_HERMES_API_URL ||
-    process.env.VITE_HERMES_API_URL ||
-    ""
+      process.env.NEXT_PUBLIC_HERMES_API_URL ||
+      process.env.VITE_HERMES_API_URL ||
+      "",
   ).replace(/\/$/, "");
   const apiKey = cleanEnv(process.env.HERMES_API_KEY || process.env.VITE_HERMES_API_KEY || "");
   const braveApiKey = cleanEnv(process.env.BRAVE_SEARCH_API_KEY || process.env.BRAVE_API_KEY || "");
@@ -192,12 +201,42 @@ export async function POST(req: Request) {
     }
   }
 
+  const buildResponse = async (base: Record<string, unknown>) => {
+    let finalProfile = profile;
+    let chargeError: string | null = null;
+
+    if (!profile.unlimited_credits) {
+      try {
+        finalProfile = await consumeChatCredit({
+          supabase: userSupabase,
+          userId,
+          profile,
+        });
+      } catch {
+        chargeError = "Credit consumption failed";
+      }
+    }
+
+    return {
+      ...base,
+      web_search: {
+        requested: shouldSearch,
+        used: searchResults.length > 0,
+        provider: "brave",
+        error: webSearchError,
+        sources: searchResults.slice(0, 5),
+      },
+      credits: {
+        ...toCreditSummary(finalProfile),
+        charged_this_request_usd: profile.unlimited_credits ? 0 : CHAT_MESSAGE_COST_USD,
+        charge_error: chargeError,
+      },
+    };
+  };
+
   if (backendUrl) {
     try {
-      // Use analyze-file endpoint when files are attached
-      const endpoint = hasFiles
-        ? `${backendUrl}/api/v1/chat/analyze-file`
-        : `${backendUrl}/api/v1/chat/deepseek`;
+      const endpoint = hasFiles ? `${backendUrl}/api/v1/chat/analyze-file` : `${backendUrl}/api/v1/chat/deepseek`;
 
       const requestBody = hasFiles
         ? {
@@ -226,37 +265,33 @@ export async function POST(req: Request) {
       if (upstream.ok) {
         try {
           const json = JSON.parse(raw);
-          return NextResponse.json({
-            ok: true,
-            source: "hermes-backend",
-            web_search: {
-              requested: shouldSearch,
-              used: searchResults.length > 0,
-              provider: "brave",
-              error: webSearchError,
-              sources: searchResults.slice(0, 5),
-            },
-            ...json,
-          });
+          return NextResponse.json(
+            await buildResponse({
+              ok: true,
+              source: "hermes-backend",
+              ...json,
+            }),
+          );
         } catch {
-          return NextResponse.json({ ok: true, source: "hermes-backend", response: raw });
+          return NextResponse.json(
+            await buildResponse({
+              ok: true,
+              source: "hermes-backend",
+              response: raw,
+            }),
+          );
         }
       }
     } catch {
-      // fall through to local response
+      // fall through to local fallback
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    source: "local-fallback",
-    web_search: {
-      requested: shouldSearch,
-      used: searchResults.length > 0,
-      provider: "brave",
-      error: webSearchError,
-      sources: searchResults.slice(0, 5),
-    },
-    response: fallbackReply(messageForModel, payload.history),
-  });
+  return NextResponse.json(
+    await buildResponse({
+      ok: true,
+      source: "local-fallback",
+      response: fallbackReply(messageForModel, payload.history),
+    }),
+  );
 }
