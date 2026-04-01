@@ -27,6 +27,8 @@ import {
 import { isApprovedGoogleEmail } from "@/lib/auth";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { Button } from "@/components/ui/button";
+import ShaderBackground from "@/components/ui/shader-background";
+import { ShaderAnimation } from "@/components/ui/shader-animation";
 
 type AttachedFile = {
   file: File;
@@ -87,17 +89,27 @@ function TypingIndicator() {
 
 function WelcomeScreen({ onQuickAction }: { onQuickAction: (text: string) => void }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 px-4 text-center py-20">
-      <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20">
-        <MessageSquare className="w-8 h-8 text-primary" />
+    <div className="flex h-full flex-col items-center justify-center gap-6 px-4 py-20 text-center">
+      <div className="relative h-48 w-full max-w-3xl overflow-hidden rounded-2xl border border-border bg-black/40">
+        <ShaderAnimation className="h-full w-full" />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-primary/40 bg-primary/20">
+              <MessageSquare className="h-6 w-6 text-primary" />
+            </div>
+            <span className="text-lg font-semibold tracking-tight text-white">Hermes Live Canvas</span>
+          </div>
+        </div>
       </div>
+
       <div className="space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">What can I help you with?</h2>
-        <p className="text-muted-foreground max-w-sm text-sm">
+        <p className="max-w-sm text-sm text-muted-foreground">
           Ask anything — I can search the web, analyze files, and more.
         </p>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-lg">
+
+      <div className="grid w-full max-w-lg grid-cols-1 gap-3 sm:grid-cols-3">
         {[
           { label: "Search the web", prompt: "Search the web for the latest AI news" },
           { label: "Upload a file", prompt: "I want to analyze a file" },
@@ -106,7 +118,7 @@ function WelcomeScreen({ onQuickAction }: { onQuickAction: (text: string) => voi
           <button
             key={item.label}
             onClick={() => onQuickAction(item.prompt)}
-            className="px-4 py-3 rounded-xl border border-border bg-card hover:bg-secondary transition-colors text-sm font-medium text-foreground"
+            className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
           >
             {item.label}
           </button>
@@ -465,8 +477,9 @@ export function HermesInterface() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="flex items-center gap-3 rounded-xl border border-border bg-card px-5 py-4">
+      <div className="relative flex min-h-screen items-center justify-center bg-background">
+        <ShaderBackground className="opacity-45" />
+        <div className="relative z-10 flex items-center gap-3 rounded-xl border border-border bg-card/85 px-5 py-4 backdrop-blur">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
           <span className="text-sm text-foreground">Verifying access…</span>
         </div>
@@ -476,14 +489,14 @@ export function HermesInterface() {
 
   if (!authSession) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="pointer-events-none fixed inset-0 bg-gradient-to-br from-background via-background to-secondary/20" />
-        <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-2xl">
+      <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
+        <ShaderBackground className="opacity-55" />
+        <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-card/90 p-8 shadow-2xl backdrop-blur">
           <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
             <Lock className="h-3.5 w-3.5" /> Restricted access
           </div>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">Hermes AI</h1>
-          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Sign in with an approved Google account to continue.
           </p>
           {authError && (
@@ -492,7 +505,7 @@ export function HermesInterface() {
             </div>
           )}
           <div className="mt-4 rounded-xl border border-border bg-secondary/50 p-4 text-sm">
-            <div className="font-medium text-foreground mb-2">Allowed accounts</div>
+            <div className="mb-2 font-medium text-foreground">Allowed accounts</div>
             <ul className="space-y-1 text-xs text-muted-foreground">
               <li>• lauroalvarado@gmail.com</li>
               <li>• desarrolladorassitantsai@gmail.com</li>
@@ -508,8 +521,9 @@ export function HermesInterface() {
 
   if (!approved) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-2xl border border-destructive/30 bg-card p-8">
+      <div className="relative flex min-h-screen items-center justify-center bg-background px-4">
+        <ShaderBackground className="opacity-45" />
+        <div className="relative z-10 w-full max-w-md rounded-2xl border border-destructive/30 bg-card/90 p-8 backdrop-blur">
           <div className="inline-flex items-center gap-2 rounded-full border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive">
             <Lock className="h-3.5 w-3.5" /> Access denied
           </div>
