@@ -54,8 +54,10 @@ export async function POST(req: Request) {
     }
   }
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  const cleanEnv = (value?: string) => (value ?? "").replace(/\\n/g, "").trim();
+
+  const supabaseUrl = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+  const supabaseAnonKey = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY);
   const authHeader = req.headers.get("authorization") || "";
   const accessToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
 
@@ -71,13 +73,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
-  const backendUrl = (
+  const backendUrl = cleanEnv(
     process.env.HERMES_API_URL ||
     process.env.NEXT_PUBLIC_HERMES_API_URL ||
     process.env.VITE_HERMES_API_URL ||
     ""
   ).replace(/\/$/, "");
-  const apiKey = process.env.HERMES_API_KEY || process.env.VITE_HERMES_API_KEY || "";
+  const apiKey = cleanEnv(process.env.HERMES_API_KEY || process.env.VITE_HERMES_API_KEY || "");
 
   if (backendUrl) {
     try {
