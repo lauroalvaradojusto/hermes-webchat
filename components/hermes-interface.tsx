@@ -10,12 +10,14 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Check,
   Copy,
+  FileText,
   Globe,
   Lock,
   LogIn,
   Loader2,
   Menu,
   MessageSquare,
+  Paperclip,
   Plus,
   SendHorizonal,
   Settings2,
@@ -25,11 +27,17 @@ import { isApprovedGoogleEmail } from "@/lib/auth";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { Button } from "@/components/ui/button";
 
+type AttachedFile = {
+  file: File;
+  id: string;
+};
+
 type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  fileName?: string;
 };
 
 type ChatSession = {
@@ -183,8 +191,10 @@ export function HermesInterface() {
   const [searchEnabled, setSearchEnabled] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeSession = chatSessions.find((s) => s.id === activeSessionId) ?? chatSessions[0];
   const messages = activeSession?.messages ?? [];
@@ -223,18 +233,20 @@ export function HermesInterface() {
     );
   }, [activeSessionId]);
 
-  const sendMessage = useCallback(async (text: string) => {
+  const sendMessage = useCallback(async (text: string, files: AttachedFile[] = []) => {
     const value = text.trim();
-    if (!value || busy) return;
+    if ((!value && files.length === 0) || busy) return;
 
     setPrompt("");
+    setAttachedFiles([]);
     setBusy(true);
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: value,
+      content: value || `(Attached ${files.length} file${files.length > 1 ? "s" : ""})`,
       createdAt: new Date().toISOString(),
+      fileName: files.length > 0 ? files.map((f) => f.file.name).join(", ") : undefined,
     };
 
     let historyForRequest: ChatMessage[] = [];
@@ -246,7 +258,7 @@ export function HermesInterface() {
         return {
           ...s,
           messages: updated,
-          title: s.messages.length === 0 ? value.slice(0, 40) : s.title,
+          title: s.messages.length === 0 ? (value || files[0]?.file.name || "File upload").slice(0, 40) : s.title,
         };
       })
     );
@@ -268,6 +280,20 @@ export function HermesInterface() {
     );
 
     try {
+      // Read files as base64 if present
+      let filesData: Array<{ name: string; type: string; content: string }> = [];
+      if (files.length > 0) {
+        filesData = await Promise.all(
+          files.map(async (af) => {
+            const buffer = await af.file.arrayBuffer();
+            const base64 = btoa(
+              new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+            );
+            return { name: af.file.name, type: af.file.type, content: base64 };
+          })
+        );
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -279,6 +305,7 @@ export function HermesInterface() {
           history: historyForRequest.map(({ role, content }) => ({ role, content })),
           model,
           search: searchEnabled,
+          files: filesData,
         }),
       });
 
@@ -371,13 +398,13 @@ export function HermesInterface() {
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    void sendMessage(prompt);
+    void sendMessage(prompt, attachedFiles);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      void sendMessage(prompt);
+      void sendMessage(prompt, attachedFiles);
     }
   };
 
@@ -616,12 +643,55 @@ export function HermesInterface() {
             onSubmit={onSubmit}
             className="max-w-2xl mx-auto w-full rounded-xl border border-border bg-background p-3"
           >
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".txt,.pdf,.csv,.docx,.xlsx,.pptx,.md,.json,.xml,.html,.py,.js,.ts,.tsx,.jsx,.css,.sql,.yaml,.yml,.toml,.ini,.cfg,.log,.rtf"
+              className="hidden"
+              onChange={(e) => {
+                const fileList = e.target.files;
+                if (!fileList || fileList.length === 0) return;
+                const newFiles: AttachedFile[] = Array.from(fileList).map((f) => ({
+                  file: f,
+                  id: crypto.randomUUID(),
+                }));
+                setAttachedFiles((prev) => [...prev, ...newFiles]);
+                // Reset input so same file can be re-selected
+                e.target.value = "";
+              }}
+            />
+
+            {/* Attached files preview */}
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {attachedFiles.map((af) => (
+                  <div
+                    key={af.id}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary max-w-[200px]"
+                  >
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{af.file.name}</span>
+                    <span className="text-muted-foreground">({(af.file.size / 1024).toFixed(0)}KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedFiles((prev) => prev.filter((f) => f.id !== af.id))}
+                      className="shrink-0 hover:text-destructive transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <textarea
               ref={textareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Message Hermes…"
+              placeholder={attachedFiles.length > 0 ? "Add a message about the attached files (optional)…" : "Message Hermes…"}
               rows={3}
               className="w-full resize-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
             />
@@ -630,6 +700,15 @@ export function HermesInterface() {
                 ⌘↵ send · ⌘N new chat
               </span>
               <div className="flex items-center gap-2 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach files"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border hover:bg-secondary text-muted-foreground border-transparent"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Attach</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setSearchEnabled(!searchEnabled)}
@@ -643,7 +722,7 @@ export function HermesInterface() {
                   <Globe className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Search</span>
                 </button>
-                <Button type="submit" size="sm" disabled={busy || !prompt.trim()} className="h-8">
+                <Button type="submit" size="sm" disabled={busy || (!prompt.trim() && attachedFiles.length === 0)} className="h-8">
                   {busy ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
