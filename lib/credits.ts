@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { APPROVED_GOOGLE_EMAILS, normalizeEmail } from "@/lib/auth";
+import { normalizeEmail } from "@/lib/auth";
 
 export const CREDIT_PACKAGES_USD = [4, 8, 16, 32, 64] as const;
 export const NEW_USER_STARTING_CREDITS_USD = 3;
@@ -17,13 +17,18 @@ export function cleanEnv(value?: string) {
   return (value ?? "").replace(/\\n/g, "").trim();
 }
 
+const DEFAULT_TEST_EMAILS = [
+  "lauroalvarado@gmail.com",
+  "desarrolladorassitantsai@gmail.com",
+];
+
 function getTestUserEmailsFromEnv() {
   const configured = cleanEnv(process.env.TEST_UNLIMITED_EMAILS)
     .split(",")
     .map((entry) => normalizeEmail(entry))
     .filter(Boolean);
 
-  return new Set<string>([...APPROVED_GOOGLE_EMAILS.map((email) => normalizeEmail(email)), ...configured]);
+  return new Set<string>([...DEFAULT_TEST_EMAILS.map((email) => normalizeEmail(email)), ...configured]);
 }
 
 export function isTestUserEmail(email?: string | null) {
