@@ -187,7 +187,12 @@ export async function POST(req: Request) {
   let messageForModel = message;
   let searchResults: SearchResult[] = [];
   let webSearchError: string | null = null;
-  const shouldSearch = !hasFiles && (payload.search === true || shouldAutoSearch(message));
+  const webSearchEnabled = cleanEnv(process.env.WEB_SEARCH_ENABLED || "true").toLowerCase() === "true";
+  const shouldSearch = webSearchEnabled && !hasFiles && (payload.search === true || shouldAutoSearch(message));
+
+  if (!webSearchEnabled) {
+    webSearchError = "disabled_by_config";
+  }
 
   if (shouldSearch && message) {
     try {
