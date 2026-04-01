@@ -16,6 +16,7 @@ import {
   Lock,
   LogIn,
   Loader2,
+  Mail,
   Menu,
   MessageSquare,
   Palette,
@@ -23,6 +24,8 @@ import {
   Plus,
   SendHorizonal,
   Settings2,
+  ShieldCheck,
+  Smartphone,
   Sparkles,
   Briefcase,
   X,
@@ -81,6 +84,17 @@ const LOOK_AND_FEEL_OPTIONS: Array<{
   { key: "business", title: "Business", description: "Minimal + executive", icon: Briefcase },
   { key: "colorful", title: "Colorful", description: "Vibrant + playful", icon: Palette },
 ];
+
+function normalizePhone(raw: string) {
+  const cleaned = raw.trim().replace(/[\s().-]/g, "");
+  if (cleaned.startsWith("00")) return `+${cleaned.slice(2)}`;
+  return cleaned;
+}
+
+function isValidE164Phone(raw: string) {
+  const normalized = normalizePhone(raw);
+  return /^\+[1-9]\d{7,14}$/.test(normalized);
+}
 
 function newChatSession(): ChatSession {
   return {
@@ -229,6 +243,14 @@ export function HermesInterface() {
   const [authSession, setAuthSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [passwordInput, setPasswordInput] = useState("");
+  const [phoneInput, setPhoneInput] = useState("");
+  const [otpInput, setOtpInput] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
   const [searchEnabled, setSearchEnabled] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -611,6 +633,139 @@ export function HermesInterface() {
     if (error) setAuthError(error.message);
   };
 
+  const sendPhoneOtp = async () => {
+    const normalizedPhone = normalizePhone(phoneInput);
+    if (!isValidE164Phone(normalizedPhone)) {
+      setAuthError("Enter a valid phone in E.164 format (example: +525512345678).");
+      return false;
+    }
+
+    const { error } = await supabaseBrowser.auth.signInWithOtp({
+      phone: normalizedPhone,
+      options: {
+        shouldCreateUser: false,
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return false;
+    }
+
+    setOtpSent(true);
+    setAuthError("SMS verification code sent. Enter it to complete 2FA.");
+    return true;
+  };
+
+  const handleEmailSignIn = async () => {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    const email = emailInput.trim().toLowerCase();
+    if (!email || !passwordInput) {
+      setAuthError("Email and password are required.");
+      setAuthSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabaseBrowser.auth.signInWithPassword({
+      email,
+      password: passwordInput,
+    });
+
+    if (error) setAuthError(error.message);
+    setAuthSubmitting(false);
+  };
+
+  const handleEmailSignUp = async () => {
+    setAuthSubmitting(true);
+    setAuthError(null);
+    setPhoneVerified(false);
+
+    const email = emailInput.trim().toLowerCase();
+    const normalizedPhone = normalizePhone(phoneInput);
+
+    if (!email || !passwordInput || !normalizedPhone) {
+      setAuthError("Email, password and phone are required.");
+      setAuthSubmitting(false);
+      return;
+    }
+
+    if (!isValidE164Phone(normalizedPhone)) {
+      setAuthError("Enter a valid phone in E.164 format (example: +525512345678).");
+      setAuthSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabaseBrowser.auth.signUp({
+      email,
+      password: passwordInput,
+      options: {
+        data: {
+          phone: normalizedPhone,
+          approval_status: "pending",
+          phone_2fa_verified: false,
+        },
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      setAuthSubmitting(false);
+      return;
+    }
+
+    const otpOk = await sendPhoneOtp();
+    if (otpOk) {
+      setAuthError("Account created. Complete phone 2FA to send your approval request.");
+    }
+
+    setAuthSubmitting(false);
+  };
+
+  const verifyPhoneOtp = async () => {
+    setAuthSubmitting(true);
+
+    const normalizedPhone = normalizePhone(phoneInput);
+    const token = otpInput.trim();
+
+    if (!token) {
+      setAuthError("Enter the SMS code.");
+      setAuthSubmitting(false);
+      return;
+    }
+
+    const { error } = await supabaseBrowser.auth.verifyOtp({
+      phone: normalizedPhone,
+      token,
+      type: "sms",
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      setAuthSubmitting(false);
+      return;
+    }
+
+    setPhoneVerified(true);
+    setAuthError("Phone 2FA verified. Your account is now pending manual approval.");
+
+    try {
+      await supabaseBrowser.auth.updateUser({
+        data: {
+          phone: normalizedPhone,
+          approval_status: "pending",
+          phone_2fa_verified: true,
+        },
+      });
+    } catch {
+      // ignore metadata update failures
+    }
+
+    await supabaseBrowser.auth.signOut();
+    setAuthSubmitting(false);
+  };
+
   const handleSignOut = async () => {
     setAuthError(null);
     setBillingError(null);
@@ -656,16 +811,133 @@ export function HermesInterface() {
               {authError}
             </div>
           )}
+
+          <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-border bg-secondary/40 p-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("signin");
+                setAuthError(null);
+              }}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                authMode === "signin" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-secondary"
+              }`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("signup");
+                setAuthError(null);
+              }}
+              className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                authMode === "signup" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-secondary"
+              }`}
+            >
+              Sign up + 2FA
+            </button>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            <label className="block text-xs text-muted-foreground">Email</label>
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+              <Mail className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                className="w-full bg-transparent text-sm outline-none"
+                placeholder="you@company.com"
+                type="email"
+                autoComplete="email"
+              />
+            </div>
+
+            <label className="block text-xs text-muted-foreground">Password</label>
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full bg-transparent text-sm outline-none"
+                placeholder="••••••••"
+                type="password"
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              />
+            </div>
+
+            {authMode === "signup" && (
+              <>
+                <label className="block text-xs text-muted-foreground">Phone (E.164)</label>
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    value={phoneInput}
+                    onChange={(e) => setPhoneInput(e.target.value)}
+                    className="w-full bg-transparent text-sm outline-none"
+                    placeholder="+525512345678"
+                    type="tel"
+                    autoComplete="tel"
+                  />
+                </div>
+
+                {otpSent && (
+                  <>
+                    <label className="block text-xs text-muted-foreground">SMS code</label>
+                    <input
+                      value={otpInput}
+                      onChange={(e) => setOtpInput(e.target.value)}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none"
+                      placeholder="123456"
+                      inputMode="numeric"
+                    />
+                  </>
+                )}
+              </>
+            )}
+          </div>
+
+          {authMode === "signin" ? (
+            <>
+              <Button className="mt-4 w-full" disabled={authSubmitting} onClick={() => void handleEmailSignIn()}>
+                <LogIn className="mr-2 h-4 w-4" /> {authSubmitting ? "Signing in…" : "Sign in with email"}
+              </Button>
+              <Button className="mt-2 w-full" variant="outline" onClick={handleGoogleSignIn}>
+                Continue with Google
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button className="mt-4 w-full" disabled={authSubmitting} onClick={() => void handleEmailSignUp()}>
+                {authSubmitting ? "Creating…" : "Create account + send SMS code"}
+              </Button>
+
+              {otpSent && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <Button variant="outline" disabled={authSubmitting} onClick={() => void sendPhoneOtp()}>
+                    Resend code
+                  </Button>
+                  <Button disabled={authSubmitting} onClick={() => void verifyPhoneOtp()}>
+                    Verify 2FA
+                  </Button>
+                </div>
+              )}
+
+              {phoneVerified && (
+                <p className="mt-2 text-xs text-emerald-400">
+                  2FA complete. Your account is pending manual approval.
+                </p>
+              )}
+            </>
+          )}
+
           <div className="mt-4 rounded-xl border border-border bg-secondary/50 p-4 text-sm">
-            <div className="mb-2 font-medium text-foreground">Allowed accounts</div>
+            <div className="mb-2 font-medium text-foreground">Current approved pilot accounts</div>
             <ul className="space-y-1 text-xs text-muted-foreground">
               <li>• lauroalvarado@gmail.com</li>
               <li>• desarrolladorassitantsai@gmail.com</li>
             </ul>
           </div>
-          <Button className="mt-6 w-full" onClick={handleGoogleSignIn}>
-            <LogIn className="mr-2 h-4 w-4" /> Continue with Google
-          </Button>
         </div>
       </div>
     );
@@ -681,7 +953,7 @@ export function HermesInterface() {
           </div>
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">Account not authorized</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This Google account is not on the approved list for Hermes.
+            This account is not approved yet. If you signed up with email + phone 2FA, wait for manual approval.
           </p>
           <Button className="mt-6 w-full" variant="outline" onClick={handleSignOut}>
             Sign out
