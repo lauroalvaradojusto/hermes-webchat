@@ -79,68 +79,31 @@ function shouldAutoSearch(message: string) {
 }
 
 async function webSearch(query: string, braveApiKey: string): Promise<SearchResult[]> {
-  if (braveApiKey) {
-    try {
-      const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
-      const braveResp = await fetch(braveUrl, {
-        headers: {
-          Accept: "application/json",
-          "X-Subscription-Token": braveApiKey,
-        },
-      });
-      if (braveResp.ok) {
-        const data = await braveResp.json();
-        const results = (data?.web?.results ?? [])
-          .slice(0, 5)
-          .map((item: any) => ({
-            title: String(item?.title ?? "").trim(),
-            url: String(item?.url ?? "").trim(),
-            snippet: String(item?.description ?? "").trim(),
-          }))
-          .filter((item: SearchResult) => item.title && item.url);
-        if (results.length > 0) return results;
-      }
-    } catch {
-      // continue to DuckDuckGo fallback
-    }
+  if (!braveApiKey) {
+    throw new Error("BRAVE_API_KEY missing");
   }
 
-  const ddgResp = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+  const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+  const braveResp = await fetch(braveUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0",
-      Accept: "text/html",
+      Accept: "application/json",
+      "X-Subscription-Token": braveApiKey,
     },
   });
 
-  if (!ddgResp.ok) return [];
-
-  const html = await ddgResp.text();
-  const titleRegex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-  const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/div>/g;
-
-  const titles: Array<{ href: string; title: string }> = [];
-  const snippets: string[] = [];
-
-  let match: RegExpExecArray | null;
-  while ((match = titleRegex.exec(html)) !== null && titles.length < 6) {
-    titles.push({
-      href: decodeDuckDuckGoLink(match[1]),
-      title: stripHtml(match[2]),
-    });
+  if (!braveResp.ok) {
+    throw new Error(`Brave API error ${braveResp.status}`);
   }
 
-  while ((match = snippetRegex.exec(html)) !== null && snippets.length < 6) {
-    snippets.push(stripHtml(match[1] || match[2] || ""));
-  }
-
-  return titles
+  const data = await braveResp.json();
+  return (data?.web?.results ?? [])
     .slice(0, 5)
-    .map((item, index) => ({
-      title: item.title,
-      url: item.href,
-      snippet: snippets[index] || "",
+    .map((item: any) => ({
+      title: String(item?.title ?? "").trim(),
+      url: String(item?.url ?? "").trim(),
+      snippet: String(item?.description ?? "").trim(),
     }))
-    .filter((item) => item.title && item.url);
+    .filter((item: SearchResult) => item.title && item.url);
 }
 
 function buildWebContext(query: string, results: SearchResult[]) {
@@ -214,6 +177,7 @@ export async function POST(req: Request) {
 
   let messageForModel = message;
   let searchResults: SearchResult[] = [];
+  let webSearchError: string | null = null;
   const shouldSearch = !hasFiles && (payload.search === true || shouldAutoSearch(message));
 
   if (shouldSearch && message) {
@@ -223,8 +187,8 @@ export async function POST(req: Request) {
       if (webContext) {
         messageForModel = `${message}\n\n${webContext}`;
       }
-    } catch {
-      // do not block chat if search fails
+    } catch (error) {
+      webSearchError = error instanceof Error ? error.message : "web search failed";
     }
   }
 
@@ -268,6 +232,8 @@ export async function POST(req: Request) {
             web_search: {
               requested: shouldSearch,
               used: searchResults.length > 0,
+              provider: "brave",
+              error: webSearchError,
               sources: searchResults.slice(0, 5),
             },
             ...json,
@@ -284,6 +250,13 @@ export async function POST(req: Request) {
   return NextResponse.json({
     ok: true,
     source: "local-fallback",
-    response: fallbackReply(message, payload.history),
+    web_search: {
+      requested: shouldSearch,
+      used: searchResults.length > 0,
+      provider: "brave",
+      error: webSearchError,
+      sources: searchResults.slice(0, 5),
+    },
+    response: fallbackReply(messageForModel, payload.history),
   });
 }
