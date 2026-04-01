@@ -11,6 +11,7 @@ import {
   Check,
   Copy,
   FileText,
+  FolderOpen,
   Globe,
   Lock,
   LogIn,
@@ -680,21 +681,21 @@ export function HermesInterface() {
 
             {/* Attached files preview */}
             {attachedFiles.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="flex flex-wrap gap-1.5 mb-2 p-2 rounded-lg bg-green-500/5 border border-green-500/20">
                 {attachedFiles.map((af) => (
                   <div
                     key={af.id}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/10 border border-primary/20 text-xs text-primary max-w-[200px]"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-500/10 border border-green-500/25 text-xs text-green-300 max-w-[240px]"
                   >
-                    <FileText className="h-3 w-3 shrink-0" />
-                    <span className="truncate">{af.file.name}</span>
-                    <span className="text-muted-foreground">({(af.file.size / 1024).toFixed(0)}KB)</span>
+                    <FolderOpen className="h-4 w-4 shrink-0 text-green-400" />
+                    <span className="truncate font-medium">{af.file.name}</span>
+                    <span className="text-green-500/70">{(af.file.size / 1024).toFixed(0)}KB</span>
                     <button
                       type="button"
                       onClick={() => setAttachedFiles((prev) => prev.filter((f) => f.id !== af.id))}
-                      className="shrink-0 hover:text-destructive transition-colors"
+                      className="shrink-0 hover:text-red-400 transition-colors ml-0.5"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -718,11 +719,17 @@ export function HermesInterface() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  title="Attach files"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border hover:bg-secondary text-muted-foreground border-transparent"
+                  title={attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached` : "Attach files"}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                    attachedFiles.length > 0
+                      ? "bg-green-500/20 text-green-400 border-green-500/30"
+                      : "hover:bg-secondary text-muted-foreground border-transparent"
+                  }`}
                 >
-                  <Paperclip className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Attach</span>
+                  <Paperclip className={`h-3.5 w-3.5 ${attachedFiles.length > 0 ? "fill-green-400" : ""}`} />
+                  <span className="hidden sm:inline">
+                    {attachedFiles.length > 0 ? `${attachedFiles.length} file${attachedFiles.length > 1 ? "s" : ""} attached` : "Attach"}
+                  </span>
                 </button>
                 <button
                   type="button"
