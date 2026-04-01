@@ -45,6 +45,35 @@ function fallbackReply(message: string, history: Payload["history"] = []) {
   return `Hermes recibió: ${message}. ${last ? `Contexto previo: ${last.slice(0, 80)}.` : ""}`.trim();
 }
 
+const LEGAL_SYSTEM_PROMPT = [
+  "[LEGAL_MODE - ACTIVE]",
+  "Eres un asistente jurídico especializado en el Código Penal del Estado de México.",
+  "Cuando respondas consultas legales, sigue estas reglas:",
+  "1. Prioriza SIEMPRE los índices LEGAL_INDEX_* (MASTER, LIBRO, TITULO, CAPITULO, ARTICULO) del sistema de memoria vectorial.",
+  "2. Cita artículos específicos con formato: Artículo XXX, Libro X, Título X, Capítulo X.",
+  "3. Si un artículo está derogado, indícalo explícitamente.",
+  "4. No inventes artículos ni supongas contenido legal. Si no encuentras el artículo, indica que no está en la base.",
+  "5. Estructura respuestas legales con: a) Artículo aplicable, b) Texto legal relevante, c) Interpretación.",
+  "6. Ignora chunks de memoria no-legales (GENERAL, TECH, etc.) cuando respondas consultas jurídicas.",
+  "[/LEGAL_MODE]",
+].join("\n");
+
+function isLegalQuery(message: string): boolean {
+  const m = message.toLowerCase();
+  const triggers = [
+    "artículo", "articulo", "codigo penal", "código penal", "pena", "delito",
+    "delitos", "prisión", "prision", "delincuente", "delito", "hurto", "robo",
+    "fraude", "homicidio", "asesinato", "lesiones", "secuestro", "violación",
+    "violacion", "abuso", "allanamiento", "denuncia", "querella", "juicio",
+    "sentencia", "proceso penal", "juez", "fiscalía", "fiscalia", "ministerio público",
+    "amparo", "garantía", "garantia", "libertad", "caución", "caucion",
+    "libro", "título", "titulo", "capítulo", "capitulo", "derogado",
+    "reforma", "jurídico", "juridico", "legal", "ley", "norma", "normativo",
+    "sanción", "sancion", "culpable", "inocente", "imputación", "imputacion",
+  ];
+  return triggers.some((term) => m.includes(term));
+}
+
 function shouldAutoSearch(message: string) {
   const m = message.toLowerCase();
   const triggers = [
@@ -184,10 +213,18 @@ export async function POST(req: Request) {
   const apiKey = cleanEnv(process.env.HERMES_API_KEY || process.env.VITE_HERMES_API_KEY || "");
   const braveApiKey = cleanEnv(process.env.BRAVE_SEARCH_API_KEY || process.env.BRAVE_API_KEY || "");
 
+  const legalModeEnabled = cleanEnv(process.env.LEGAL_MODE_ENABLED || "true").toLowerCase() === "true";
+  const isLegal = legalModeEnabled && isLegalQuery(message);
+
   let messageForModel = message;
   let searchResults: SearchResult[] = [];
   let webSearchError: string | null = null;
   const webSearchEnabled = cleanEnv(process.env.WEB_SEARCH_ENABLED || "true").toLowerCase() === "true";
+
+  // Inject legal system prompt for legal queries
+  if (isLegal) {
+    messageForModel = `${LEGAL_SYSTEM_PROMPT}\n\nConsulta del usuario: ${message}`;
+  }
   const shouldSearch = webSearchEnabled && !hasFiles && (payload.search === true || shouldAutoSearch(message));
 
   if (!webSearchEnabled) {
@@ -230,6 +267,10 @@ export async function POST(req: Request) {
         provider: "brave",
         error: webSearchError,
         sources: searchResults.slice(0, 5),
+      },
+      legal_mode: {
+        enabled: legalModeEnabled,
+        detected: isLegal,
       },
       credits: {
         ...toCreditSummary(finalProfile),
