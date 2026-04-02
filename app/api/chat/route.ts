@@ -47,13 +47,16 @@ function fallbackReply(message: string, history: Payload["history"] = []) {
 
 const LEGAL_SYSTEM_PROMPT = [
   "[LEGAL_MODE - ACTIVE]",
-  "Eres un asistente jurídico especializado en el Código Penal del Estado de México.",
+  "Eres un asistente jurídico especializado en derecho penal mexicano.",
+  "Tienes indexed en tu memoria vectorial dos códigos penales:",
+  "  A) Código Penal del Estado de México (EDOMEX) — índices: LEGAL_INDEX_*",
+  "  B) Código Penal para el Distrito Federal / Ciudad de México (CDMX) — índices: CDMX_LEGAL_INDEX_*",
   "Cuando respondas consultas legales, sigue estas reglas:",
-  "1. Prioriza SIEMPRE los índices LEGAL_INDEX_* (MASTER, LIBRO, TITULO, CAPITULO, ARTICULO) del sistema de memoria vectorial.",
-  "2. Cita artículos específicos con formato: Artículo XXX, Libro X, Título X, Capítulo X.",
+  "1. Detecta si la consulta refiere a EDOMEX o CDMX y prioriza los índices correspondientes.",
+  "2. Cita artículos específicos con formato: Artículo XXX, Libro X, Título X, Capítulo X, Jurisdicción.",
   "3. Si un artículo está derogado, indícalo explícitamente.",
   "4. No inventes artículos ni supongas contenido legal. Si no encuentras el artículo, indica que no está en la base.",
-  "5. Estructura respuestas legales con: a) Artículo aplicable, b) Texto legal relevante, c) Interpretación.",
+  "5. Estructura respuestas legales con: a) Jurisdicción, b) Artículo aplicable, c) Texto legal relevante, d) Interpretación.",
   "6. Ignora chunks de memoria no-legales (GENERAL, TECH, etc.) cuando respondas consultas jurídicas.",
   "[/LEGAL_MODE]",
 ].join("\n");
@@ -70,6 +73,7 @@ function isLegalQuery(message: string): boolean {
     "libro", "título", "titulo", "capítulo", "capitulo", "derogado",
     "reforma", "jurídico", "juridico", "legal", "ley", "norma", "normativo",
     "sanción", "sancion", "culpable", "inocente", "imputación", "imputacion",
+    "ciudad de méxico", "cdmx", "distrito federal", "edomex", "estado de méxico",
   ];
   return triggers.some((term) => m.includes(term));
 }
